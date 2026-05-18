@@ -93,6 +93,20 @@ OUTLIER_REASONS = [
     "None",
 ]
 
+CONTRAINDICATION_REASONS = [
+    "Uncontrolled Hypertension",
+    "Consent Declined",
+    "Spontaneous Improvement",
+    "Recent Surgery",
+    "Active Bleeding",
+    "Symptom Onset Unknown",
+]
+CONTRAINDICATION_RATE = 0.25  # ~25% contraindication probability per eligible A/V case — tuned so end-to-end treatment rate lands in the 75–82% target band on this seed.
+
+# Isolated RNG for the contraindication path so adding this branch doesn't
+# perturb the main np.random/random sequences used elsewhere in the file.
+_contra_rng = np.random.default_rng(seed=RNG_SEED + 1)
+
 
 def weighted_nihss():
     # Realistic distribution — most cases 4-16, long tail to 42
@@ -262,7 +276,13 @@ def generate_patient_records(n: int) -> pd.DataFrame:
             los_days = np.nan
             icu = np.nan if np.random.random() < 0.5 else icu
 
-        treatment_administered = "Yes" if eligible and agent != "None" else "No"
+        contraindication_reason = None
+        if eligible and encounter_type == "Audio/Video" and _contra_rng.random() < CONTRAINDICATION_RATE:
+            treatment_administered = "No"
+            contraindication_reason = str(_contra_rng.choice(CONTRAINDICATION_REASONS))
+            agent = "None"
+        else:
+            treatment_administered = "Yes" if eligible and agent != "None" else "No"
 
         records.append({
             # Period
@@ -309,6 +329,7 @@ def generate_patient_records(n: int) -> pd.DataFrame:
             "lvo_indicator": lvo,
             # Procedures & outcomes
             "treatment_administered": treatment_administered,
+            "contraindication_reason": contraindication_reason,
             "stroke_diagnosis": stroke_diagnosis,
             "stroke_subtype": stroke_subtype,
             "admit_status": admit_status,
