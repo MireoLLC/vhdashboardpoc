@@ -11,11 +11,17 @@ if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
 from utils.charts import bar_chart, histogram, overlay_lines, pie_chart, trend_line  # noqa: E402
-from utils.filters import empty_state_check, render_filters  # noqa: E402
-from utils.theme import FY_MONTH_ORDER, PAGE_CSS, PSH_NAVY, PSH_TEAL  # noqa: E402
+from utils.filters import render_telestroke_filters  # noqa: E402
+from utils.sidebar import render_sidebar  # noqa: E402
+from utils.theme import FY_MONTH_ORDER, PSH_NAVY, PSH_TEAL, get_global_css  # noqa: E402
 
 st.set_page_config(page_title="Financial", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
-st.markdown(PAGE_CSS, unsafe_allow_html=True)
+st.markdown(get_global_css(), unsafe_allow_html=True)
+
+if "authenticated" not in st.session_state or not st.session_state.authenticated:
+    st.switch_page("app.py")
+
+render_sidebar()
 
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
 
@@ -34,17 +40,19 @@ def load_costs():
 
 df_full = load_patients()
 costs_full = load_costs()
-df = render_filters(df_full)
 
-st.markdown("<h1>Financial Summary <span class='phase2-badge'>Phase 2</span></h1>", unsafe_allow_html=True)
+st.markdown("<h1>Financial Summary <span class='badge badge-phase2'>Phase 2</span></h1>", unsafe_allow_html=True)
 st.caption("Cost of delivery, downstream revenue, payer mix.")
-st.markdown(
-    "<p class='poc-note'>PoC — Synthetic data only. For illustrative purposes.</p>",
-    unsafe_allow_html=True,
-)
+st.caption("PoC — Synthetic data only. For illustrative purposes.")
 
-if not empty_state_check(df):
+df = render_telestroke_filters(df_full)
+
+if not len(df):
+    st.warning("No records match the current filters.")
     st.stop()
+
+df["month_name"] = pd.Categorical(df["month_name"], categories=FY_MONTH_ORDER, ordered=True)
+df = df.sort_values(["fiscal_year", "month_name"])
 
 # Filter monthly cost data to selected fiscal years
 fy_set = set(df["fiscal_year"].unique().tolist())

@@ -1,93 +1,170 @@
-"""Shared sidebar filter panel used on every page."""
+"""Horizontal filter bars rendered at the top of each program's pages."""
 
-from datetime import date
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
 
-def render_filters(df: pd.DataFrame) -> pd.DataFrame:
-    """Render the sidebar filter panel and return the filtered DataFrame.
+_ALL = "All"
 
-    The full (unfiltered) record count is captured before any filters are
-    applied so the sidebar can show "Showing X of Y records".
+
+def render_telestroke_filters(df: pd.DataFrame) -> pd.DataFrame:
+    """Render the TeleStroke horizontal filter bar and return the filtered df.
+
+    Filters:
+      - Fiscal Year (selectbox, "All" default)
+      - Facility (multiselect, max 3, "All facilities" placeholder when empty)
+      - Encounter Type (selectbox, "All" default)
+      - Consultant (multiselect, "All consultants" placeholder when empty)
+      - Date Range (date_input).
     """
-    total_records = len(df)
+    with st.container():
+        st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
 
-    with st.sidebar:
-        st.markdown(
-            "<h2 style='color:white; margin-bottom:0;'>🧠 PSH Telestroke Dashboard</h2>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            "<p style='color:#D6E4F0; font-style:italic; margin-top:0;'>Art of the Possible — PoC</p>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("---")
-        st.markdown("**Filters**")
+        col1, col2, col3, col4, col5 = st.columns([1.5, 1.5, 1.5, 1.5, 2])
 
-        # Fiscal Year
-        fy_options = sorted(df["fiscal_year"].dropna().unique().tolist())
-        fy_selected = st.multiselect("Fiscal Year", fy_options, default=fy_options)
+        with col1:
+            fiscal_years = sorted(df["fiscal_year"].unique().tolist())
+            selected_fy = st.selectbox(
+                "Fiscal Year",
+                options=[_ALL] + fiscal_years,
+                index=0,
+                key="filter_fy",
+            )
 
-        # Facility
-        facility_options = sorted(df["facility"].dropna().unique().tolist())
-        facility_selected = st.multiselect("Facility / Spoke Site", facility_options, default=facility_options)
+        with col2:
+            facilities = sorted(df["facility"].unique().tolist())
+            selected_facilities = st.multiselect(
+                "Facility",
+                options=facilities,
+                default=[],
+                placeholder="All facilities",
+                max_selections=3,
+                key="filter_facility",
+            )
 
-        # Encounter type
-        encounter_options = sorted(df["encounter_type"].dropna().unique().tolist())
-        encounter_selected = st.multiselect("Encounter Type", encounter_options, default=encounter_options)
+        with col3:
+            enc_options = [_ALL, "Audio/Video", "Phone", "Reg-No Consult"]
+            selected_enc = st.selectbox(
+                "Encounter Type",
+                options=enc_options,
+                index=0,
+                key="filter_enc_type",
+            )
 
-        # Date range
-        ed_arrival = pd.to_datetime(df["ed_arrival_dt"])
-        min_date = ed_arrival.min().date()
-        max_date = ed_arrival.max().date()
-        date_range = st.date_input(
-            "Date Range (ED arrival)",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-        )
+        with col4:
+            consultants = sorted(df["consultant_name"].unique().tolist())
+            selected_consultants = st.multiselect(
+                "Consultant",
+                options=consultants,
+                default=[],
+                placeholder="All consultants",
+                key="filter_consultant",
+            )
 
-        # Consultant
-        consultant_options = sorted(df["consultant_name"].dropna().unique().tolist())
-        consultant_selected = st.multiselect("Consultant", consultant_options, default=consultant_options)
+        with col5:
+            arrival = pd.to_datetime(df["ed_arrival_dt"], errors="coerce")
+            min_date = arrival.min().date()
+            max_date = arrival.max().date()
+            date_range = st.date_input(
+                "Date Range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                key="filter_date_range",
+            )
 
-        st.markdown("---")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # Apply filters
     filtered = df.copy()
-    if fy_selected:
-        filtered = filtered[filtered["fiscal_year"].isin(fy_selected)]
-    if facility_selected:
-        filtered = filtered[filtered["facility"].isin(facility_selected)]
-    if encounter_selected:
-        filtered = filtered[filtered["encounter_type"].isin(encounter_selected)]
-    if consultant_selected:
-        filtered = filtered[filtered["consultant_name"].isin(consultant_selected)]
 
+    if selected_fy != _ALL:
+        filtered = filtered[filtered["fiscal_year"] == selected_fy]
+    if selected_facilities:
+        filtered = filtered[filtered["facility"].isin(selected_facilities)]
+    if selected_enc != _ALL:
+        filtered = filtered[filtered["encounter_type"] == selected_enc]
+    if selected_consultants:
+        filtered = filtered[filtered["consultant_name"].isin(selected_consultants)]
     if isinstance(date_range, tuple) and len(date_range) == 2:
-        start, end = date_range
-        ed_dt = pd.to_datetime(filtered["ed_arrival_dt"])
-        filtered = filtered[(ed_dt.dt.date >= start) & (ed_dt.dt.date <= end)]
-    elif isinstance(date_range, date):
-        ed_dt = pd.to_datetime(filtered["ed_arrival_dt"])
-        filtered = filtered[ed_dt.dt.date == date_range]
+        filtered["ed_arrival_dt"] = pd.to_datetime(filtered["ed_arrival_dt"], errors="coerce")
+        filtered = filtered[
+            (filtered["ed_arrival_dt"].dt.date >= date_range[0])
+            & (filtered["ed_arrival_dt"].dt.date <= date_range[1])
+        ]
 
-    with st.sidebar:
-        st.markdown(
-            f"<div style='color:#D6E4F0;'><b>Showing {len(filtered):,} of {total_records:,} records</b></div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("---")
-        st.caption("Synthetic data only — not real PHI")
+    st.caption(f"**{len(filtered):,}** of {len(df):,} records shown")
 
     return filtered
 
 
-def empty_state_check(df: pd.DataFrame) -> bool:
-    """Return True if the filtered DataFrame has rows; otherwise show an info message and return False."""
-    if len(df) == 0:
-        st.info("No records match the selected filters. Widen your filter selection in the sidebar.")
-        return False
-    return True
+def render_telesitting_filters(pl_df: pd.DataFrame, rl_df: pd.DataFrame):
+    """Render the TeleSitting horizontal filter bar. Returns (filtered_pl_df, filtered_rl_df)."""
+    with st.container():
+        st.markdown('<div class="filter-bar">', unsafe_allow_html=True)
+
+        col1, col2, col3, col4 = st.columns([1.5, 1.5, 1.5, 2])
+
+        with col1:
+            fiscal_years = sorted(pl_df["fiscal_year"].unique().tolist())
+            selected_fy = st.multiselect(
+                "Fiscal Year",
+                options=fiscal_years,
+                default=fiscal_years,
+                key="tsit_filter_fy",
+            )
+
+        with col2:
+            hospitals = sorted(pl_df["hospital"].unique().tolist())
+            selected_hospitals = st.multiselect(
+                "Hospital",
+                options=hospitals,
+                default=hospitals,
+                key="tsit_filter_hospital",
+            )
+
+        with col3:
+            risk_levels = ["High", "Medium", "Low"]
+            selected_risk = st.multiselect(
+                "Risk Level",
+                options=risk_levels,
+                default=risk_levels,
+                key="tsit_filter_risk",
+            )
+
+        with col4:
+            admit = pd.to_datetime(pl_df["admit_dt"], errors="coerce")
+            min_date = admit.min().date()
+            max_date = admit.max().date()
+            date_range = st.date_input(
+                "Date Range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                key="tsit_filter_date",
+            )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    filtered_pl = pl_df.copy()
+    if selected_fy:
+        filtered_pl = filtered_pl[filtered_pl["fiscal_year"].isin(selected_fy)]
+    if selected_hospitals:
+        filtered_pl = filtered_pl[filtered_pl["hospital"].isin(selected_hospitals)]
+    if selected_risk:
+        filtered_pl = filtered_pl[filtered_pl["risk_level"].isin(selected_risk)]
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        filtered_pl["admit_dt"] = pd.to_datetime(filtered_pl["admit_dt"], errors="coerce")
+        filtered_pl = filtered_pl[
+            (filtered_pl["admit_dt"].dt.date >= date_range[0])
+            & (filtered_pl["admit_dt"].dt.date <= date_range[1])
+        ]
+
+    filtered_rl = rl_df[rl_df["fin"].isin(filtered_pl["fin"])]
+
+    st.caption(
+        f"**{len(filtered_pl):,}** patients · **{len(filtered_rl):,}** redirect events shown"
+    )
+
+    return filtered_pl, filtered_rl
