@@ -10,9 +10,15 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from utils.charts import overlay_lines  # noqa: E402
+from utils.charts import add_benchmark_line, overlay_lines  # noqa: E402
 from utils.filters import render_telestroke_filters  # noqa: E402
 from utils.sidebar import render_sidebar  # noqa: E402
+from utils.targets import (  # noqa: E402
+    get_traffic_light,
+    get_traffic_light_emoji,
+    render_kpi_card,
+    render_targets_panel,
+)
 from utils.theme import FY_MONTH_ORDER, PSH_NAVY, PSH_TEAL, get_global_css  # noqa: E402
 
 st.set_page_config(page_title="Provider Performance", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
@@ -71,18 +77,32 @@ def _provider_summary(d: pd.DataFrame) -> dict:
 providers = sorted(df["consultant_name"].dropna().unique().tolist())
 selected = st.selectbox("Select consultant", providers, index=0 if providers else None)
 
+selected_d2n_frac = None
+selected_response_min = None
+selected_nihss_frac = None
+selected_consent_frac = None
+
 if selected:
     pdf = df[df["consultant_name"] == selected]
     s = _provider_summary(pdf)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total consults", f"{s['total_consults']:,}")
-    c2.metric("D2N Compliance", f"{s['d2n_compliance_pct']:.1f}%" if pd.notna(s["d2n_compliance_pct"]) else "—",
-              help="Benchmark ≥85%")
-    c3.metric("Median response", f"{s['median_response_min']:.1f} min" if pd.notna(s["median_response_min"]) else "—",
-              help="Benchmark ≤15 min")
-    c4.metric("NIHSS documentation", f"{s['nihss_compliance_pct']:.1f}%")
-    c5.metric("Consent completion", f"{s['consent_completion_pct']:.1f}%")
+    selected_d2n_frac = (s["d2n_compliance_pct"] / 100.0) if pd.notna(s["d2n_compliance_pct"]) else None
+    selected_response_min = s["median_response_min"] if pd.notna(s["median_response_min"]) else None
+    selected_nihss_frac = s["nihss_compliance_pct"] / 100.0
+    selected_consent_frac = s["consent_completion_pct"] / 100.0
+
+    t1, t2, t3, t4 = st.columns(4)
+    with t1:
+        render_kpi_card("door_to_needle_compliance_60", selected_d2n_frac)
+    with t2:
+        render_kpi_card("door_to_neurologist_minutes", selected_response_min)
+    with t3:
+        render_kpi_card("nihss_documentation_compliance", selected_nihss_frac)
+    with t4:
+        render_kpi_card("consent_form_compliance", selected_consent_frac)
+    st.caption(f"Volume: **{s['total_consults']:,}** consults · "
+               f"Avg handle: **{s['avg_handle_min']:.1f} min**" if pd.notna(s['avg_handle_min']) else
+               f"Volume: **{s['total_consults']:,}** consults")
 
 st.markdown("---")
 
@@ -92,7 +112,9 @@ st.markdown("##### Provider comparison (TS-19)")
 rows = []
 for name in providers:
     s = _provider_summary(df[df["consultant_name"] == name])
+    d2n_frac = (s["d2n_compliance_pct"] / 100.0) if pd.notna(s["d2n_compliance_pct"]) else None
     rows.append({
+        "Status": get_traffic_light_emoji(get_traffic_light(d2n_frac, "door_to_needle_compliance_60")),
         "Provider": name,
         "Volume": s["total_consults"],
         "D2N Compliance %": round(s["d2n_compliance_pct"], 1) if pd.notna(s["d2n_compliance_pct"]) else None,
@@ -105,27 +127,38 @@ for name in providers:
 cmp_df = pd.DataFrame(rows)
 
 
+def _cell_color(status_str):
+    return {
+        "green": "background-color: #DCFCE7",
+        "amber": "background-color: #FEF3C7",
+        "red":   "background-color: #FEE2E2",
+        "gray":  "",
+    }.get(status_str, "")
+
+
 def _style(row):
     colors = ["" for _ in row]
     cols = list(row.index)
 
-    def _set(col, ok):
+    def _set(col, target_key, value_for_grading):
         idx = cols.index(col)
-        colors[idx] = f"background-color: {'#DCFCE7' if ok else '#FEE2E2'}"
+        colors[idx] = _cell_color(get_traffic_light(value_for_grading, target_key))
 
     if pd.notna(row["D2N Compliance %"]):
-        _set("D2N Compliance %", row["D2N Compliance %"] >= 85)
+        _set("D2N Compliance %", "door_to_needle_compliance_60", row["D2N Compliance %"] / 100.0)
     if pd.notna(row["Median Response (min)"]):
-        _set("Median Response (min)", row["Median Response (min)"] <= 15)
+        _set("Median Response (min)", "door_to_neurologist_minutes", row["Median Response (min)"])
     if pd.notna(row["NIHSS Doc %"]):
-        _set("NIHSS Doc %", row["NIHSS Doc %"] >= 85)
+        _set("NIHSS Doc %", "nihss_documentation_compliance", row["NIHSS Doc %"] / 100.0)
     if pd.notna(row["Consent %"]):
-        _set("Consent %", row["Consent %"] >= 80)
+        _set("Consent %", "consent_form_compliance", row["Consent %"] / 100.0)
     return colors
 
 
 st.dataframe(cmp_df.style.apply(_style, axis=1), use_container_width=True, hide_index=True)
-st.caption("Green = meeting benchmark · Red = below benchmark (D2N ≥85%, response ≤15 min, NIHSS doc ≥85%, consent ≥80%).")
+st.caption("Status emoji reflects D2N compliance vs ≥85% target. "
+           "Per-cell colors use the same target table as the KPI tiles "
+           "(🟢 meeting · 🟡 within amber band · 🔴 missing target).")
 
 # ── Section 3: Monthly trend for selected provider ────────────────────────
 st.markdown("---")
@@ -165,7 +198,16 @@ if selected:
             x_title="Month",
             y_title="Min / %",
         )
+        fig = add_benchmark_line(fig, 85, "D2N target: ≥85%")
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Navy = median response (minutes) · Teal = D2N compliance (%)")
     else:
         st.info("Not enough data for a trend on this provider in the current filter.")
+
+# ── Performance Targets reference panel ──────────────────────────────────
+render_targets_panel([
+    {"target_key": "door_to_needle_compliance_60",   "current_value": selected_d2n_frac},
+    {"target_key": "door_to_neurologist_minutes",    "current_value": selected_response_min},
+    {"target_key": "nihss_documentation_compliance", "current_value": selected_nihss_frac},
+    {"target_key": "consent_form_compliance",        "current_value": selected_consent_frac},
+])

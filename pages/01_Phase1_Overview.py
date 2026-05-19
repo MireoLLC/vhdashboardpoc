@@ -11,9 +11,21 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from utils.charts import bar_chart, histogram, stacked_bar, trend_line  # noqa: E402
+from utils.charts import (  # noqa: E402
+    add_benchmark_line,
+    add_benchmark_vline,
+    bar_chart,
+    histogram,
+    stacked_bar,
+    trend_line,
+)
 from utils.filters import render_telestroke_filters  # noqa: E402
 from utils.sidebar import render_sidebar  # noqa: E402
+from utils.targets import (  # noqa: E402
+    render_gray_card,
+    render_kpi_card,
+    render_targets_panel,
+)
 from utils.theme import FY_MONTH_ORDER, PSH_LTBLUE, PSH_NAVY, PSH_RED, PSH_TEAL, get_global_css  # noqa: E402
 
 st.set_page_config(page_title="Phase 1 Overview", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
@@ -76,14 +88,32 @@ median_d2cart = df["door_to_cart_minutes"].median()
 median_neuro_decision = av["neurologist_to_decision_minutes"].median()
 median_decision_tnk = eligible["decision_to_administration_minutes"].median()
 
-k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
-k1.metric("D2N Compliance (≤60 min)", f"{d2n_compliance:.1f}%", help="TS-01 · Benchmark ≥85% (AHA/ASA)")
-k2.metric("Median Door-to-Neurologist", f"{median_d2neuro:.1f} min" if pd.notna(median_d2neuro) else "—", help="TS-02 · Benchmark ≤30 min")
-k3.metric("Avg Stroke Alerts / Month", f"{alerts_per_month:.0f}", help="TS-04 · Volume reference")
-k4.metric("Cart Uptime", f"{cart_uptime:.1f}%", help="TS-05 · Benchmark ≥99% SLA")
-k5.metric("Median Door-to-Cart", f"{median_d2cart:.1f} min" if pd.notna(median_d2cart) else "—", help="TS-06 · Benchmark ≤15 min")
-k6.metric("Median Neuro-to-Decision", f"{median_neuro_decision:.1f} min" if pd.notna(median_neuro_decision) else "—", help="TS-07 · Benchmark ≤20 min · A/V only")
-k7.metric("Median Decision-to-TNK", f"{median_decision_tnk:.1f} min" if pd.notna(median_decision_tnk) else "—", help="TS-10 · Benchmark ≤5 min · Eligible only")
+# Fractions for traffic-light grading (existing display variables stay in pct
+# form so the rest of the page is unchanged).
+d2n_compliance_frac = d2n_compliance / 100.0
+cart_uptime_frac    = cart_uptime / 100.0
+
+k1, k2, k3, k4 = st.columns(4)
+with k1:
+    render_kpi_card("door_to_needle_compliance_60", d2n_compliance_frac)
+with k2:
+    render_kpi_card("door_to_neurologist_minutes", median_d2neuro)
+with k3:
+    render_gray_card(
+        "Avg Stroke Alerts / Month",
+        f"{alerts_per_month:.0f}",
+        note="TS-04 · Trending volume metric — no absolute target",
+    )
+with k4:
+    render_kpi_card("cart_uptime", cart_uptime_frac)
+
+k5, k6, k7, _ = st.columns(4)
+with k5:
+    render_kpi_card("door_to_cart_minutes", median_d2cart)
+with k6:
+    render_kpi_card("neurologist_to_decision_minutes", median_neuro_decision)
+with k7:
+    render_kpi_card("decision_to_administration_minutes", median_decision_tnk)
 
 st.markdown("---")
 
@@ -115,10 +145,12 @@ with r1c2:
         trend = trend.sort_values(["fiscal_year", "month_number"])
         fig = trend_line(
             trend, x_col="month_name", y_col="compliance_pct",
-            title=None, benchmark=85,
+            title=None,
             category_orders={"month_name": FY_MONTH_ORDER},
             y_title="Compliance %", x_title="Month",
+            color_col="fiscal_year",
         )
+        fig = add_benchmark_line(fig, 85, "Target: ≥85% (AHA/ASA)")
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Audio/Video, thrombolysis-eligible cases only.")
     else:
@@ -131,7 +163,8 @@ with r2c1:
     st.markdown("##### Door-to-Neurologist distribution (TS-02)")
     fig = histogram(df.dropna(subset=["door_to_neurologist_minutes"]),
                     col="door_to_neurologist_minutes", title=None,
-                    bins=25, benchmark=30, x_title="Minutes")
+                    bins=25, x_title="Minutes")
+    fig = add_benchmark_vline(fig, 20, "Target: ≤20 min")
     st.plotly_chart(fig, use_container_width=True)
 
 with r2c2:
@@ -142,10 +175,12 @@ with r2c2:
     cart_trend = cart_trend.sort_values(["fiscal_year", "month_number"])
     fig = trend_line(
         cart_trend, x_col="month_name", y_col="door_to_cart_minutes",
-        title=None, benchmark=15,
+        title=None,
         category_orders={"month_name": FY_MONTH_ORDER},
         y_title="Median minutes", x_title="Month",
+        color_col="fiscal_year",
     )
+    fig = add_benchmark_line(fig, 15, "Target: ≤15 min")
     st.plotly_chart(fig, use_container_width=True)
 
 # ── Section 4: Row 3 ─────────────────────────────────────────────────────
@@ -160,10 +195,12 @@ with r3c1:
         nd = nd.sort_values(["fiscal_year", "month_number"])
         fig = trend_line(
             nd, x_col="month_name", y_col="neurologist_to_decision_minutes",
-            title=None, benchmark=20,
+            title=None,
             category_orders={"month_name": FY_MONTH_ORDER},
             y_title="Median minutes", x_title="Month",
+            color_col="fiscal_year",
         )
+        fig = add_benchmark_line(fig, 20, "Target: ≤20 min")
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Audio/Video consults only.")
     else:
@@ -178,9 +215,10 @@ with r3c2:
         )
         fig = bar_chart(
             by_fac, x_col="facility", y_col="decision_to_administration_minutes",
-            title=None, benchmark=5, color=PSH_TEAL,
+            title=None, color=PSH_TEAL,
             x_title="Facility", y_title="Median minutes",
         )
+        fig = add_benchmark_line(fig, 5, "Target: ≤5 min")
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Eligible cases only.")
     else:
@@ -203,6 +241,10 @@ if len(eligible):
         return ">60 min"
 
     el = eligible.copy()
+    # month_name is Categorical further up the page; convert to string here so
+    # the downstream pivot_table + fillna(0) doesn't fail with "Cannot setitem
+    # on a Categorical with a new category (0)".
+    el["month_name"] = el["month_name"].astype(str)
     el["d2n_bucket"] = el["door_to_needle_time_minutes"].apply(bucket)
     el = el.dropna(subset=["d2n_bucket"])
 
@@ -239,3 +281,13 @@ if len(eligible):
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No eligible cases for threshold bucket analysis.")
+
+# ── Performance Targets reference panel ──────────────────────────────────
+render_targets_panel([
+    {"target_key": "door_to_needle_compliance_60",       "current_value": d2n_compliance_frac},
+    {"target_key": "door_to_neurologist_minutes",        "current_value": median_d2neuro},
+    {"target_key": "cart_uptime",                        "current_value": cart_uptime_frac},
+    {"target_key": "door_to_cart_minutes",               "current_value": median_d2cart},
+    {"target_key": "neurologist_to_decision_minutes",    "current_value": median_neuro_decision},
+    {"target_key": "decision_to_administration_minutes", "current_value": median_decision_tnk},
+])

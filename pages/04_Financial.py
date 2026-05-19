@@ -10,9 +10,21 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from utils.charts import bar_chart, histogram, overlay_lines, pie_chart, trend_line  # noqa: E402
+from utils.charts import (  # noqa: E402
+    add_benchmark_line,
+    bar_chart,
+    histogram,
+    overlay_lines,
+    pie_chart,
+    trend_line,
+)
 from utils.filters import render_telestroke_filters  # noqa: E402
 from utils.sidebar import render_sidebar  # noqa: E402
+from utils.targets import (  # noqa: E402
+    render_gray_card,
+    render_kpi_card,
+    render_targets_panel,
+)
 from utils.theme import FY_MONTH_ORDER, PSH_NAVY, PSH_TEAL, get_global_css  # noqa: E402
 
 st.set_page_config(page_title="Financial", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
@@ -64,11 +76,45 @@ downstream_revenue = costs["downstream_revenue"].mean() if len(costs) else 0.0
 net_revenue = downstream_revenue - monthly_cost
 medicare_share = (df["payer_category"] == "Medicare").mean() * 100
 
+# Cost-per-consult: monthly_cost / consults-in-that-month, averaged across months
+monthly_consults = (
+    df.groupby(["fiscal_year", "month_name"], observed=False).size()
+      .reset_index(name="consults")
+)
+if len(monthly_consults) and len(costs):
+    monthly_join = costs.merge(
+        monthly_consults, on=["fiscal_year", "month_name"], how="inner"
+    )
+    monthly_join["cost_per_consult"] = monthly_join.apply(
+        lambda r: (r["total_monthly_cost"] / r["consults"]) if r["consults"] else None,
+        axis=1,
+    )
+    avg_cost_per_consult = monthly_join["cost_per_consult"].dropna().mean()
+else:
+    monthly_join = pd.DataFrame()
+    avg_cost_per_consult = None
+
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Avg Monthly Cost", f"${monthly_cost:,.0f}", help="TS-08 · Synthetic")
-c2.metric("Avg Downstream Revenue", f"${downstream_revenue:,.0f}", help="TS-09 · Synthetic")
-c3.metric("Net Revenue (Rev − Cost)", f"${net_revenue:,.0f}")
-c4.metric("Medicare Share", f"{medicare_share:.1f}%", help="Payer mix")
+with c1:
+    render_kpi_card("cost_per_consult", avg_cost_per_consult)
+with c2:
+    render_gray_card(
+        "Avg Monthly Cost",
+        f"${monthly_cost:,.0f}",
+        note="TS-08 · Trending metric — no absolute target",
+    )
+with c3:
+    render_gray_card(
+        "Avg Downstream Revenue",
+        f"${downstream_revenue:,.0f}",
+        note="TS-09 · Trending metric — no absolute target",
+    )
+with c4:
+    render_gray_card(
+        "Net Revenue (Rev − Cost)",
+        f"${net_revenue:,.0f}",
+        note=f"Medicare share: {medicare_share:.1f}%",
+    )
 
 st.markdown("---")
 
@@ -81,11 +127,19 @@ costs_sorted["month_label"] = costs_sorted["fiscal_year"].str[2:] + " " + costs_
 r1c1, r1c2 = st.columns(2)
 
 with r1c1:
-    st.markdown("##### Monthly cost trend (TS-08)")
-    fig = trend_line(costs_sorted, x_col="month_label", y_col="total_monthly_cost",
-                     title=None, color=PSH_TEAL, y_title="USD", x_title="Month")
-    st.plotly_chart(fig, use_container_width=True)
-    st.markdown("<p class='poc-note'>PoC — Synthetic data only. For illustrative purposes.</p>", unsafe_allow_html=True)
+    st.markdown("##### Cost per consult trend")
+    if len(monthly_join):
+        cpc_sorted = monthly_join.copy()
+        cpc_sorted["month_name"] = pd.Categorical(cpc_sorted["month_name"], categories=FY_MONTH_ORDER, ordered=True)
+        cpc_sorted = cpc_sorted.sort_values(["fiscal_year", "month_name"])
+        cpc_sorted["month_label"] = cpc_sorted["fiscal_year"].str[2:] + " " + cpc_sorted["month_name"].astype(str).str[:3]
+        fig = trend_line(cpc_sorted, x_col="month_label", y_col="cost_per_consult",
+                         title=None, color=PSH_TEAL, y_title="USD / consult", x_title="Month")
+        fig = add_benchmark_line(fig, 300, "Target: ≤$300/consult")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Not enough monthly data to compute cost-per-consult.")
+    st.caption("Cost-per-consult = monthly cost ÷ consult volume that month.")
 
 with r1c2:
     st.markdown("##### Downstream revenue by month (TS-09)")
@@ -116,3 +170,8 @@ fig = histogram(df.dropna(subset=["reimbursement_amount"]), col="reimbursement_a
                 title=None, bins=25, x_title="USD")
 st.plotly_chart(fig, use_container_width=True)
 st.markdown("<p class='poc-note'>PoC — Synthetic data only. For illustrative purposes.</p>", unsafe_allow_html=True)
+
+# ── Performance Targets reference panel ──────────────────────────────────
+render_targets_panel([
+    {"target_key": "cost_per_consult", "current_value": avg_cost_per_consult},
+])

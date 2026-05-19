@@ -16,8 +16,16 @@ from utils.theme import (
 
 
 def _apply_layout(fig, title=None, x_title=None, y_title=None, height=380):
+    # NOTE: pass an explicit empty-text dict when title is falsy. Older versions
+    # of this function passed `title=None`, which Plotly renders as the literal
+    # string "undefined" in the chart's gtitle slot.
+    title_layout = (
+        dict(text=title, font=dict(family=FONT_FAMILY, size=15, color=PSH_NAVY))
+        if title
+        else dict(text="")
+    )
     fig.update_layout(
-        title=dict(text=title, font=dict(family=FONT_FAMILY, size=15, color=PSH_NAVY)) if title else None,
+        title=title_layout,
         plot_bgcolor=CHART_BG,
         paper_bgcolor=CHART_BG,
         font=dict(family=FONT_FAMILY, color="#1F2937", size=12),
@@ -26,6 +34,42 @@ def _apply_layout(fig, title=None, x_title=None, y_title=None, height=380):
         xaxis=dict(title=x_title, gridcolor=GRID_COLOR, linecolor=GRID_COLOR),
         yaxis=dict(title=y_title, gridcolor=GRID_COLOR, linecolor=GRID_COLOR),
         legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="left", x=0),
+    )
+    return fig
+
+
+def add_benchmark_line(fig, value, label, color="#EF4444", dash="dash"):
+    """Add a horizontal benchmark reference line + annotation to a figure.
+
+    Call after the chart is built but before returning::
+
+        fig = trend_line(df, x_col, y_col, title=None)
+        fig = add_benchmark_line(fig, 0.85, "Target: ≥85%")
+    """
+    fig.add_hline(
+        y=value,
+        line_dash=dash,
+        line_color=color,
+        line_width=1.5,
+        annotation_text=label,
+        annotation_position="top right",
+        annotation_font_size=11,
+        annotation_font_color=color,
+    )
+    return fig
+
+
+def add_benchmark_vline(fig, value, label, color="#EF4444", dash="dash"):
+    """Add a vertical benchmark reference line — for distributions/histograms."""
+    fig.add_vline(
+        x=value,
+        line_dash=dash,
+        line_color=color,
+        line_width=1.5,
+        annotation_text=label,
+        annotation_position="top right",
+        annotation_font_size=11,
+        annotation_font_color=color,
     )
     return fig
 
@@ -66,17 +110,38 @@ def kpi_card(value, label, benchmark=None, delta=None, color=PSH_TEAL):
     }
 
 
-def trend_line(df, x_col, y_col, title, benchmark=None, color=PSH_TEAL, y_title=None, x_title=None, category_orders=None):
-    fig = px.line(
-        df,
-        x=x_col,
-        y=y_col,
-        markers=True,
-        category_orders=category_orders,
-    )
-    fig.update_traces(line=dict(color=color, width=3), marker=dict(size=7, color=color))
+def trend_line(df, x_col, y_col, title, benchmark=None, color=PSH_TEAL, y_title=None, x_title=None, category_orders=None, color_col=None):
+    """Plot a trend line. If ``color_col`` is provided (e.g. ``"fiscal_year"``)
+    each unique value becomes its own named line with the legend showing the
+    raw values; this keeps multi-year trends from collapsing into a single
+    crossing line on a shared month axis.
+    """
+    if color_col:
+        fig = px.line(
+            df,
+            x=x_col,
+            y=y_col,
+            color=color_col,
+            markers=True,
+            category_orders=category_orders,
+            color_discrete_sequence=[PSH_NAVY, PSH_TEAL, PSH_BLUE, PSH_LTBLUE],
+        )
+        fig.update_traces(line=dict(width=3), marker=dict(size=7))
+    else:
+        fig = px.line(
+            df,
+            x=x_col,
+            y=y_col,
+            markers=True,
+            category_orders=category_orders,
+        )
+        fig.update_traces(line=dict(color=color, width=3), marker=dict(size=7, color=color))
     fig = _apply_layout(fig, title=title, x_title=x_title or x_col, y_title=y_title or y_col)
     fig = _add_benchmark_line(fig, benchmark)
+    if x_col == "month_name":
+        fig.update_xaxes(tickangle=-45)
+    if color_col:
+        fig.update_layout(legend_title_text="")
     return fig
 
 
@@ -102,6 +167,15 @@ def bar_chart(df, x_col, y_col, title, color=PSH_TEAL, orientation="v", color_co
         fig.update_traces(marker_color=color)
     fig = _apply_layout(fig, title=title, x_title=x_title or x_col, y_title=y_title or y_col)
     fig = _add_benchmark_line(fig, benchmark, horizontal=(orientation == "v"))
+    # When months are on the x-axis, tilt labels so July/August/etc. don't get
+    # truncated to "Ju"/"Au".
+    if x_col == "month_name" and orientation == "v":
+        fig.update_xaxes(tickangle=-45)
+    # When color_col is set (e.g. fiscal_year), Plotly auto-titles the legend
+    # with the raw column name ("fiscal_year"). Clear it so the legend reads
+    # just the values.
+    if color_col:
+        fig.update_layout(legend_title_text="")
     return fig
 
 

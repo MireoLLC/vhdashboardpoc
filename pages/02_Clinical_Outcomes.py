@@ -10,9 +10,18 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from utils.charts import bar_chart, grouped_bar, histogram, pie_chart, stacked_bar, trend_line  # noqa: E402
+from utils.charts import (  # noqa: E402
+    add_benchmark_line,
+    bar_chart,
+    grouped_bar,
+    histogram,
+    pie_chart,
+    stacked_bar,
+    trend_line,
+)
 from utils.filters import render_telestroke_filters  # noqa: E402
 from utils.sidebar import render_sidebar  # noqa: E402
+from utils.targets import render_kpi_card, render_targets_panel  # noqa: E402
 from utils.theme import FY_MONTH_ORDER, PSH_NAVY, PSH_TEAL, get_global_css  # noqa: E402
 
 st.set_page_config(page_title="Clinical Outcomes", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
@@ -59,13 +68,29 @@ icu_rate = (df["icu_admission"] == "Yes").mean() * 100
 nihss_compliance = (df["nihss_documentation_compliance"] == "Yes").mean() * 100
 consent_completion = (df["consent_form_completed"] == "Yes").mean() * 100
 
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("Treatment Rate", f"{treatment_rate:.1f}%", help="Treated / eligible Audio-Video cases")
-c2.metric("LVO Detection Rate", f"{lvo_rate:.1f}%")
-c3.metric("30-Day Readmission", f"{readmit_rate:.1f}%")
-c4.metric("ICU Admission", f"{icu_rate:.1f}%")
-c5.metric("NIHSS Documentation", f"{nihss_compliance:.1f}%")
-c6.metric("Consent Completion", f"{consent_completion:.1f}%")
+# Convert each KPI to a fraction for traffic-light grading.
+treatment_rate_frac  = treatment_rate / 100.0
+lvo_rate_frac        = lvo_rate / 100.0
+readmit_rate_frac    = readmit_rate / 100.0
+icu_rate_frac        = icu_rate / 100.0
+nihss_compliance_frac  = nihss_compliance / 100.0
+consent_completion_frac = consent_completion / 100.0
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    render_kpi_card("treatment_rate", treatment_rate_frac)
+with c2:
+    render_kpi_card("lvo_detection_rate", lvo_rate_frac, synthetic=True)
+with c3:
+    render_kpi_card("nihss_documentation_compliance", nihss_compliance_frac)
+
+c4, c5, c6 = st.columns(3)
+with c4:
+    render_kpi_card("consent_form_compliance", consent_completion_frac)
+with c5:
+    render_kpi_card("thirty_day_readmission", readmit_rate_frac, synthetic=True)
+with c6:
+    render_kpi_card("icu_admission_rate", icu_rate_frac, synthetic=True)
 
 st.markdown("---")
 
@@ -181,11 +206,22 @@ if len(eligible):
         trend = trend.sort_values(["fiscal_year", "month_number"])
         fig = trend_line(
             trend, x_col="month_name", y_col="compliance_pct",
-            title=None, benchmark=85,
+            title=None,
             category_orders={"month_name": FY_MONTH_ORDER},
             y_title="Compliance %", x_title="Month",
-            color=PSH_TEAL,
+            color_col="fiscal_year",
         )
+        fig = add_benchmark_line(fig, 85, "Target: ≥85% (GWTG)")
         st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No eligible Audio/Video cases for outlier analysis.")
+
+# ── Performance Targets reference panel ──────────────────────────────────
+render_targets_panel([
+    {"target_key": "treatment_rate",                 "current_value": treatment_rate_frac},
+    {"target_key": "lvo_detection_rate",             "current_value": lvo_rate_frac},
+    {"target_key": "nihss_documentation_compliance", "current_value": nihss_compliance_frac},
+    {"target_key": "consent_form_compliance",        "current_value": consent_completion_frac},
+    {"target_key": "thirty_day_readmission",         "current_value": readmit_rate_frac},
+    {"target_key": "icu_admission_rate",             "current_value": icu_rate_frac},
+])

@@ -11,9 +11,21 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
-from utils.charts import bar_chart, heatmap, pie_chart, stacked_bar, trend_line  # noqa: E402
+from utils.charts import (  # noqa: E402
+    add_benchmark_line,
+    bar_chart,
+    heatmap,
+    pie_chart,
+    stacked_bar,
+    trend_line,
+)
 from utils.filters import render_telestroke_filters  # noqa: E402
 from utils.sidebar import render_sidebar  # noqa: E402
+from utils.targets import (  # noqa: E402
+    render_gray_card,
+    render_kpi_card,
+    render_targets_panel,
+)
 from utils.theme import FY_MONTH_ORDER, PSH_NAVY, PSH_TEAL, get_global_css  # noqa: E402
 
 st.set_page_config(page_title="Operational Performance", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
@@ -65,11 +77,25 @@ avg_consult_duration = duration.mean()
 ed_share = (df["admit_status"].isin(["Discharged", "Observation"])).mean() * 100
 inpatient_share = 100 - ed_share
 
+response_outlier_rate_frac = response_outlier_rate / 100.0
+
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("Median Door-to-Needle", f"{median_d2n:.1f} min" if pd.notna(median_d2n) else "—", help="TS-14 · Eligible A/V cases")
-k2.metric("Response Time Outlier Rate", f"{response_outlier_rate:.1f}%", help="Provider response > 15 min")
-k3.metric("Avg Consult Duration", f"{avg_consult_duration:.1f} min" if pd.notna(avg_consult_duration) else "—", help="TS-20 · Call-to-provider to consult-signed")
-k4.metric("ED vs Inpatient", f"{ed_share:.0f}% / {inpatient_share:.0f}%", help="TS-17 · Proxy from admit status")
+with k1:
+    render_kpi_card("door_to_needle_median_minutes", median_d2n)
+with k2:
+    render_kpi_card("response_time_outlier_rate", response_outlier_rate_frac)
+with k3:
+    render_gray_card(
+        "Avg Consult Duration",
+        f"{avg_consult_duration:.1f} min" if pd.notna(avg_consult_duration) else "—",
+        note="TS-20 · Call-to-provider to consult-signed — trending only",
+    )
+with k4:
+    render_gray_card(
+        "ED vs Inpatient Mix",
+        f"{ed_share:.0f}% / {inpatient_share:.0f}%",
+        note="TS-17 · Proxy from admit status — trending only",
+    )
 
 st.markdown("---")
 
@@ -118,6 +144,7 @@ with r2c2:
     fig = heatmap(tod, x_col="facility", y_col="time_of_day_block", value_col="consults", title=None,
                   x_title="Facility", y_title="Time block")
     st.plotly_chart(fig, use_container_width=True)
+    st.caption("Peak alert volume hours should align with the consultant staffing model.")
 
 r3c1, r3c2 = st.columns(2)
 
@@ -164,10 +191,12 @@ if len(eligible):
     trend = trend.sort_values(["fiscal_year", "month_number"])
     fig = trend_line(
         trend, x_col="month_name", y_col="decision_to_administration_minutes",
-        title=None, benchmark=5,
+        title=None,
         category_orders={"month_name": FY_MONTH_ORDER},
         y_title="Median minutes", x_title="Month",
+        color_col="fiscal_year",
     )
+    fig = add_benchmark_line(fig, 5, "Target: ≤5 min")
     st.plotly_chart(fig, use_container_width=True)
 
     site_table = (
@@ -189,3 +218,14 @@ if len(eligible):
     st.caption("Outliers (median > 5 min benchmark) highlighted in red.")
 else:
     st.info("No eligible cases for decision-to-administration analysis.")
+
+# ── Performance Targets reference panel ──────────────────────────────────
+median_d2a_for_panel = (
+    eligible["decision_to_administration_minutes"].median()
+    if len(eligible) else None
+)
+render_targets_panel([
+    {"target_key": "door_to_needle_median_minutes",      "current_value": median_d2n},
+    {"target_key": "response_time_outlier_rate",         "current_value": response_outlier_rate_frac},
+    {"target_key": "decision_to_administration_minutes", "current_value": median_d2a_for_panel},
+])
