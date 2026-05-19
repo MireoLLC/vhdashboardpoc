@@ -6,6 +6,7 @@ call it.
 """
 
 import os
+import subprocess
 import sys
 
 import streamlit as st
@@ -73,6 +74,19 @@ def check_password():
                 else:
                     st.error("Incorrect password")
         st.stop()
+
+
+# ── Cold-start data generation ────────────────────────────────────────────
+# data/*.csv is gitignored, so on Streamlit Community Cloud (and any fresh
+# clone) the synthetic CSVs won't exist on first boot. Generate them once.
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+if not os.path.exists(os.path.join(DATA_DIR, "telestroke_synthetic.csv")):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    subprocess.run(
+        ["python", "generate_data.py"],
+        cwd=os.path.dirname(__file__),
+        check=True,
+    )
 
 
 check_password()
